@@ -61,3 +61,10 @@ static let storeURL = "https://你的网址"
 | `SaleTap.xcodeproj` | Xcode 工程，已带共享 scheme（CI 要用） |
 | `.github/workflows/build.yml` | 云端编译出未签名 IPA |
 | `.github/workflows/build-signed.yml` | 云端编译 + 签名（需要证书） |
+
+## 备注
+
+- 工程和 workflow 都是按标准写法写的，但**没在真机 / CI 上跑过**（我这边没有 Xcode 也没有 macOS）。第一次跑如果报错，把 Actions 的日志发我，我改。
+- 还没加 App 图标。要加就在 Xcode 里新建 `Assets.xcassets`，拖一张 1024×1024 的图进去。
+- 想改 Bundle ID：Xcode 里项目 → Signing & Capabilities，或直接改 `project.pbxproj` 里的 `PRODUCT_BUNDLE_IDENTIFIER`。
+- 上架 App Store 的话，只有一个「打开网页」按钮的 App 很可能被拒（审核指南 4.2 最小功能性）。
