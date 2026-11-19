@@ -43,7 +43,7 @@ struct FilesView: View {
                 allowsMultipleSelection: false
             ) { result in
                 do {
-                    let url = try result.get()
+                    guard let url = try result.get().first else { return }
                     try copyIn(url)
                     reload()
                 } catch {
