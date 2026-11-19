@@ -1,0 +1,128 @@
+name: Build signed IPA
+
+# 需要 Apple 开发者账号 + 证书 + 描述文件，配好 Secrets 后手动运行。
+# 没有这些就用 build.yml（出的是未签名 IPA，靠签名工具装）。
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 检查 Secrets 是否齐全
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in BUILD_CERTIFICATE_BASE64 P12_PASSWORD PROVISIONING_PROFILE_BASE64 TEAM_ID; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::缺少 secret: $name"
+              missing=1
+            fi
+          done
+          exit $missing
+
+      - name: 导入证书与描述文件
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          set -euo pipefail
+          CERT="$RUNNER_TEMP/cert.p12"
+          PROFILE="$RUNNER_TEMP/profile.mobileprovision"
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+
+          printf '%s' "$BUILD_CERTIFICATE_BASE64" | base64 --decode > "$CERT"
+          printf '%s' "$PROVISIONING_PROFILE_BASE64" | base64 --decode > "$PROFILE"
+
+          security create-keychain -p "" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "" "$KEYCHAIN"
+          security import "$CERT" -k "$KEYCHAIN" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k "" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          cp "$PROFILE" ~/Library/MobileDevice/Provisioning\ Profiles/
+
+      - name: 打包 Archive
+        env:
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+        run: |
+          set -euo pipefail
+          PROFILE_FILE="$(ls ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision | head -1)"
+          PROFILE_NAME="$(security cms -D -i "$PROFILE_FILE" | plutil -extract Name raw -o - -)"
+          echo "使用描述文件：$PROFILE_NAME"
+
+          xcodebuild \
+            -project SaleTap.xcodeproj \
+            -scheme SaleTap \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/SaleTap.xcarchive \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            CODE_SIGN_STYLE=Manual \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
+            archive
+
+      - name: 导出 IPA
+        env:
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+          METHOD: ${{ secrets.EXPORT_METHOD }}
+        run: |
+          set -euo pipefail
+          METHOD="${METHOD:-development}"
+          PROFILE_FILE="$(ls ~/Library/MobileDevice/Provisioning\ Profiles/*.mobileprovision | head -1)"
+          PROFILE_NAME="$(security cms -D -i "$PROFILE_FILE" | plutil -extract Name raw -o - -)"
+          BUNDLE_ID="$(xcodebuild -project SaleTap.xcodeproj -target SaleTap -showBuildSettings \
+            | awk -F' = ' '/ PRODUCT_BUNDLE_IDENTIFIER /{print $2; exit}')"
+          echo "Bundle ID：$BUNDLE_ID / 方式：$METHOD"
+
+          cat > ExportOptions.plist <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>$METHOD</string>
+            <key>teamID</key>
+            <string>$TEAM_ID</string>
+            <key>signingStyle</key>
+            <string>manual</string>
+            <key>stripSwiftSymbols</key>
+            <true/>
+            <key>compileBitcode</key>
+            <false/>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>$BUNDLE_ID</key>
+              <string>$PROFILE_NAME</string>
+            </dict>
+          </dict>
+          </plist>
+          PLIST
+
+          xcodebuild -exportArchive \
+            -archivePath build/SaleTap.xcarchive \
+            -exportOptionsPlist ExportOptions.plist \
+            -exportPath build/export
+
+          ls -lh build/export
+
+      - name: 上传 IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: SaleTap-signed-ipa
+          path: build/export/*.ipa
+          if-no-files-found: error
+          retention-days: 30

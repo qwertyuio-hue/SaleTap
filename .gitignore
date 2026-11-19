@@ -1,0 +1,18 @@
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xcworkspace/xcuserdata/
+
+# 产物
+*.ipa
+*.dSYM.zip
+*.dSYM
+Payload/
+
+# macOS
+.DS_Store
+
+# 系统
+Thumbs.db

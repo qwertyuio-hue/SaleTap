@@ -1,0 +1,56 @@
+name: Build IPA
+
+# 推代码到 main/master，或在 Actions 页面手动点 Run workflow
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Xcode version
+        run: xcodebuild -version
+
+      - name: Build (unsigned)
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project SaleTap.xcodeproj \
+            -scheme SaleTap \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package IPA
+        run: |
+          set -euo pipefail
+          APP_DIR="build/Build/Products/Release-iphoneos/SaleTap.app"
+          if [ ! -d "$APP_DIR" ]; then
+            echo "找不到构建产物 $APP_DIR"
+            ls -R build/Build/Products || true
+            exit 1
+          fi
+          rm -rf Payload
+          mkdir -p Payload
+          cp -R "$APP_DIR" Payload/
+          zip -qry SaleTap-unsigned.ipa Payload
+          ls -lh SaleTap-unsigned.ipa
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SaleTap-unsigned-ipa
+          path: SaleTap-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30
